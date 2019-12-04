@@ -2,7 +2,7 @@
 
 ## Connection
 
-// TODO: Scheme here
+<img src="https://drive.google.com/uc?export=view&id=1BwUeDYt_xN0IrdARrumfaPBQBaIcosic">
 
 ## Usage
 

@@ -15,7 +15,7 @@ MODULE_DESCRIPTION("Seven segment driver - Linux device driver for Raspberry Pi"
 #define DEVICE_NAME "seven7segment"
 
 #define MY_MAX_MINORS 1
-#define PINS_NUMBER 8
+#define PINS_NUMBER 7
 
 #define A   4
 #define B   5
@@ -24,20 +24,21 @@ MODULE_DESCRIPTION("Seven segment driver - Linux device driver for Raspberry Pi"
 #define E   13
 #define F   16
 #define G   17
-#define H   18
+
+#define end -1
 
 
-int all_pins[8] = {A, B, C, D, E, F, G, H};
-int number_0[2] = {A, B, C, D, E, F};
-int number_1[2] = {B, C};
-int number_2[6] = {A, B, D, E, G, H};
-int number_3[6] = {A, B, C, D, G, H};
-int number_4[5] = {B, C, F, G, H};
-int number_5[6] = {A, C, D, F, G, H};
-int number_6[7] = {A, C, D, E, F, G, H};
-int number_7[3] = {A, B, C};
-int number_8[8] = {A, B, C, D, E, F, G, H};
-int number_9[7] = {A, B, C, D, F, G, H};
+int all_pins[8] = {A, B, C, D, E, F, G, end};
+int number_0[7] = {A, B, C, D, E, F, end};
+int number_1[3] = {B, C, end};
+int number_2[6] = {A, B, D, E, G, end};
+int number_3[6] = {A, B, C, D, G, end};
+int number_4[5] = {B, C, F, G, end};
+int number_5[6] = {A, C, D, F, G, end};
+int number_6[7] = {A, C, D, E, F, G, end};
+int number_7[4] = {A, B, C, end};
+int number_8[8] = {A, B, C, D, E, F, G, end};
+int number_9[7] = {A, B, C, D, F, G, end};
 
 int* numbers[10] = {number_0, number_1, number_2, number_3, number_4,
                   number_5, number_6, number_7, number_8, number_9};
@@ -123,12 +124,12 @@ void set_digit(int digit){
     if (active_mode){
         int* cur_num = numbers[digit];
 
-        while(*cur_num){
+        while(*cur_num != end){
             gpio_set_value(*cur_num, true);
             cur_num++;
         }
 
-        printk("[seven7segment] - Set digit %d\n", digit);
+        printk("[seven7segment] - Set digit %d.\n", digit);
     }
 }
 
@@ -143,20 +144,20 @@ static int __init  seven7segment_init(void) {
     seven7segment_kobj = kobject_create_and_add(DEVICE_NAME, kernel_kobj->parent);
 
     if(!seven7segment_kobj) {
-        printk("[seven7segment]: error creating kobj\n");
+        printk("[seven7segment]: error creating kobj.\n");
         return -ENOMEM;
     }
 
     result = sysfs_create_group(seven7segment_kobj, &attr_group);
     if(result) {
-        printk(KERN_ALERT "[seven7segment]: failed to create sysfs group\n");
+        printk(KERN_ALERT "[seven7segment]: failed to create sysfs group.\n");
         kobject_put(seven7segment_kobj);                // clean up -- remove the kobject sysfs entry
         return result;
     }
 
 
     int g;
-    char *pins_name = { "A", "B", "C", "D", "E", "F", "G", "H" };
+    char *pins_name = { "A", "B", "C", "D", "E", "F", "G" };
     for (g = 0; g < PINS_NUMBER; g++) {
         gpio_request(all_pins[g], &pins_name[g]);
     }
