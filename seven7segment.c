@@ -2,17 +2,20 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/gpio.h>
-#include <linux/uaccess.h>
-#include <linux/cdev.h>
-#include <asm/uaccess.h>
+#include <linux/kernel.h>
+#include <linux/kobject.h>    // Using kobjects for the sysfs bindings
+#include <linux/kthread.h>    // Using kthreads for the flashing functionality
 
-#include "gpio_lkm.h"
 
-MODULE_LICENSE("Dual BSD/GPL");
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Sofiia Tesliuk <sofiia.tesliuk@gmail.com>");
+MODULE_DESCRIPTION("Seven segment driver - Linux device driver for Raspberry Pi");
+
 
 #define DEVICE_NAME "seven7segment"
 
 #define MY_MAX_MINORS 1
+#define PINS_NUMBER 8
 
 #define A   4
 #define B   5
@@ -23,7 +26,9 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define G   17
 #define H   18
 
+
 int all_pins[8] = {A, B, C, D, E, F, G, H};
+int number_0[2] = {A, B, C, D, E, F};
 int number_1[2] = {B, C};
 int number_2[6] = {A, B, D, E, G, H};
 int number_3[6] = {A, B, C, D, G, H};
@@ -34,112 +39,149 @@ int number_7[3] = {A, B, C};
 int number_8[8] = {A, B, C, D, E, F, G, H};
 int number_9[7] = {A, B, C, D, F, G, H};
 
-#define BUF_LEN 16
-static char message[BUF_LEN];
-static char *msg_p;
+int* numbers[10] = {number_0, number_1, number_2, number_3, number_4,
+                  number_5, number_6, number_7, number_8, number_9};
 
-//buffer to store data
-char * memory_buffer;
+bool active_mode = true; // Default mode is active
+int current_digit = 0; // Default number is 0
 
 
-static int  seven7segment_open(struct inode *inode, struct file *filp);
-static int  seven7segment_release(struct inode *inode, struct file *filp);
-static ssize_t  seven7segment_read(struct file *filp, char *buf, size_t count, loff_t *f_pos);
-static ssize_t seven7segment_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos);
-static void __exit seven7segment_exit(void);
+void sleep_mode(void);
+void set_digit(int digit);
+
+static ssize_t seven7segment_show_digit(struct kobject *kobj, struct kobj_attribute *attr, char *buf){
+    return sprintf(buf, "%d\n", current_digit);
+}
+
+static ssize_t seven7segment_store_digit(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count){
+    if (strncmp(buf, "0", count-1)==0) { set_digit(0); }
+    else if (strncmp(buf,"1",count-1)==0) { set_digit(1);}
+    else if (strncmp(buf,"2",count-1)==0) { set_digit(2);}
+    else if (strncmp(buf,"3",count-1)==0) { set_digit(3);}
+    else if (strncmp(buf,"4",count-1)==0) { set_digit(4);}
+    else if (strncmp(buf,"5",count-1)==0) { set_digit(5);}
+    else if (strncmp(buf,"6",count-1)==0) { set_digit(6);}
+    else if (strncmp(buf,"7",count-1)==0) { set_digit(7);}
+    else if (strncmp(buf,"8",count-1)==0) { set_digit(8);}
+    else if (strncmp(buf,"9",count-1)==0) { set_digit(9);}
+    else{
+        printk("[seven7segment] - Invalid digit.\n");
+    }
+    return count;
+}
+
+static ssize_t seven7segment_show_mode(struct kobject *kobj, struct kobj_attribute *attr, char *buf){
+    if (active_mode)
+        return sprintf(buf, "active\n");
+    else
+        return sprintf(buf, "sleep\n");
+}
+
+static ssize_t seven7segment_store_mode(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count){
+    if (strncmp(buf, "a", count-1)==0) { active_mode = true; set_digit(current_digit); }
+    else if (strncmp(buf,"s",count-1)==0) { active_mode = false; sleep_mode(); }
+    else{
+        printk("[seven7segment] - Invalid mode.\n");
+    }
+    return count;
+}
+
+static struct kobj_attribute digit_attr = __ATTR(digit, 0660, seven7segment_show_digit, seven7segment_store_digit);
+static struct kobj_attribute mode_attr = __ATTR(mode, 0660, seven7segment_show_mode, seven7segment_store_mode);
+
+static struct attribute *seven7segment_attrs[] = {
+        &digit_attr.attr,
+        &mode_attr.attr,
+        NULL,
+};
+
+static struct attribute_group attr_group = {
+        .name  = DEVICE_NAME,                        // The name is generated in ebbLED_init()
+        .attrs = seven7segment_attrs,                      // The attributes array defined just above
+};
+
+static struct kobject *seven7segment_kobj;            // The pointer to the kobject
+
+
+void sleep_mode(){
+    int g;
+    for (g = 0; g < PINS_NUMBER; g++){
+        gpio_set_value(all_pins[g], false);
+    }
+}
+
+void set_digit(int digit){
+    if ((digit < 0) || (digit > 9)){
+        printk("[seven7segment] - Digit is out of range.\n");
+        return;
+    }
+
+    sleep_mode();
+
+    current_digit = digit;
+
+    if (active_mode){
+        int* cur_num = numbers[digit];
+
+        while(*cur_num){
+            gpio_set_value(*cur_num, true);
+            cur_num++;
+        }
+
+        printk("[seven7segment] - Set digit %d\n", digit);
+    }
+}
+
+
 static int __init  seven7segment_init(void);
+static void __exit seven7segment_exit(void);
 
-
-/* file access functions */
-struct file_operations seven7segment_fops = {
-        .read =     seven7segment_read,
-        .write =    seven7segment_write,
-        .open =     seven7segment_open,
-        .release =  seven7segment_release
-};
-
-struct my_device_data {
-    struct cdev cdev;
-    /* my data starts here */
-    //...
-};
-
-struct my_device_data devs[MY_MAX_MINORS];
-
-/* Driver global variables */
-/* Major number */
-int seven7segment_major = 62;
-
-module_init(seven7segment_init);
-module_exit(seven7segment_exit);
 
 static int __init  seven7segment_init(void) {
-    int result;
+    int result = 0;
 
-    // register char device
-    result = register_chrdev(seven7segment_major, DEVICE_NAME,
-                             &seven7segment_fops);
-    if(result < 0) {
-        printk("[seven7segment]: error obtaining major number %d\n",
-               seven7segment_major);
+    seven7segment_kobj = kobject_create_and_add(DEVICE_NAME, kernel_kobj->parent);
+
+    if(!seven7segment_kobj) {
+        printk("[seven7segment]: error creating kobj\n");
+        return -ENOMEM;
+    }
+
+    result = sysfs_create_group(seven7segment_kobj, &attr_group);
+    if(result) {
+        printk(KERN_ALERT "[seven7segment]: failed to create sysfs group\n");
+        kobject_put(seven7segment_kobj);                // clean up -- remove the kobject sysfs entry
         return result;
     }
 
-    printk("[seven7segment]: registered device with major number %d\n",
-           seven7segment_major);
 
-    printk("GET RESULT: GPIO_LKM_WRITE_PIN %d\n", gpio_lkm_write_pin(0, true));
-    printk("[seven7segment] - Inserting module\n");
+    int g;
+    char *pins_name = { "A", "B", "C", "D", "E", "F", "G", "H" };
+    for (g = 0; g < PINS_NUMBER; g++) {
+        gpio_request(all_pins[g], &pins_name[g]);
+    }
+    for (g = 0; g < PINS_NUMBER; g++) {
+        gpio_direction_output(all_pins[g], 0);
+    }
+
+    set_digit(0);
+
+    printk("[seven7segment] - Inserting module.\n");
     return 0;
 }
 
 static void __exit seven7segment_exit(void) {
-    unregister_chrdev(seven7segment_major, DEVICE_NAME);
+    sleep_mode();
 
-    /* Freeing buffer memory */
-    if (memory_buffer) {
-        kfree(memory_buffer);
+    kobject_put(seven7segment_kobj);
+
+    int g;
+    for (g = 0; g < PINS_NUMBER; g++) {
+        gpio_free(all_pins[g]);
     }
 
-    printk("[seven7segment] - Removing module\n");
+    printk("[seven7segment] - Removing module.\n");
 }
 
-static int seven7segment_open(struct inode *inode, struct file *file){
-    struct my_device_data *my_data;
-    my_data = container_of(inode->i_cdev, struct my_device_data, cdev);
-    file->private_data = my_data;
-    return 0;
-}
-
-static int seven7segment_release(struct inode *inode, struct file *filp) {
-    /* Success */
-    return 0;
-}
-
-static ssize_t seven7segment_read(struct file *file, char * buf,size_t size, loff_t *f_pos) {
-    /* Transfering data to user space */
-    copy_to_user(buf, memory_buffer,1);
-    /* Changing reading position as best suits */
-    if (*f_pos == 0) {
-        *f_pos+=1;
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
-static ssize_t seven7segment_write( struct file *filp, const char *ubuf, size_t count, loff_t *f_pos) {
-    /* Buffer writing to the device */
-    char *kbuf = kcalloc((count + 1), sizeof(char), GFP_KERNEL);
-
-    if(copy_from_user(kbuf, ubuf, count) != 0) {
-        kfree(kbuf);
-        return -EFAULT;
-    }
-
-    kbuf[count-1] = 0;
-
-    kfree(kbuf);
-
-    return (ssize_t)count;
-}
+module_init(seven7segment_init);
+module_exit(seven7segment_exit);
